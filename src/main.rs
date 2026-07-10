@@ -1,3 +1,6 @@
-fn main() {
-    println!("Hello, world!");
+mod logger;
+
+#[tokio::main]
+async fn main() {
+    logger::init();
 }

@@ -1,7 +1,11 @@
 [package]
-name = "JellyBridge"
+name = "jelly_bridge"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
 [dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"]}
