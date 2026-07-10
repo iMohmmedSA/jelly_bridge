@@ -2,9 +2,8 @@ use tracing::info;
 use tracing_appender::rolling;
 use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
-pub fn init() {
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,jellybridge=debug"));
+pub fn init(filter: &str) {
+    let env_filter = EnvFilter::new(filter);
 
     let console_layer = tracing_subscriber::fmt::layer()
         .with_target(false)
