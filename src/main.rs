@@ -1,9 +1,10 @@
-use crate::{config::Config, db::Database, error::Result};
+use crate::{config::Config, error::Result, state::State};
 
 mod config;
 mod db;
 mod error;
 mod logger;
+mod state;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -11,7 +12,7 @@ async fn main() -> Result<()> {
 
     logger::init(&config.log_filter);
 
-    let db = Database::init().await?;
+    State::init().await?;
 
     Ok(())
 }
