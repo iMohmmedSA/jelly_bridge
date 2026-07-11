@@ -3,6 +3,7 @@ use crate::{config::Config, error::Result, state::State};
 mod config;
 mod db;
 mod error;
+mod http;
 mod logger;
 mod state;
 
@@ -12,7 +13,9 @@ async fn main() -> Result<()> {
 
     logger::init(&config.log_filter);
 
-    State::init().await?;
+    let state = State::init().await?;
+
+    http::serve(state).await?;
 
     Ok(())
 }

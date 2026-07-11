@@ -1,5 +1,6 @@
 use crate::{db::Database, error::Result};
 
+#[derive(Clone)]
 pub struct State {
     db: Database,
 }
