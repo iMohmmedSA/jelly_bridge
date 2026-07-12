@@ -15,6 +15,12 @@ pub enum Error {
     #[error("Migration error: {0}")]
     Migration(#[from] sqlx::migrate::MigrateError),
 
+    #[error("Network error: {0}")]
+    Network(#[from] reqwest::Error),
+
+    #[error("XML Parse error: {0}")]
+    XMLDeserialize(#[from] quick_xml::de::DeError),
+
     #[error("Generic error: {0}")]
     Generic(String),
 }

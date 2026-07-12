@@ -1,14 +1,18 @@
+use reqwest::Client;
+
 use crate::{db::Database, error::Result};
 
 #[derive(Clone)]
 pub struct State {
-    db: Database,
+    pub http: Client,
+    pub db: Database,
 }
 
 impl State {
     pub async fn init() -> Result<Self> {
         let db = Database::init().await?;
+        let http = Client::new();
 
-        Ok(Self { db })
+        Ok(Self { http, db })
     }
 }

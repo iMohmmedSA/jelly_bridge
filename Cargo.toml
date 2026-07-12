@@ -8,6 +8,8 @@ license = "MIT"
 axum = "0.8"
 config = "0.15"
 dotenvy = "0.15"
+quick-xml = { version = "0.41", features = ["serialize"] }
+reqwest = { version = "0.13", features = ["query"] }
 serde = { version = "1", features = ["derive"] }
 sqlx = { version = "0.9", features = ["sqlite", "runtime-tokio"] }
 thiserror = "2"
@@ -15,3 +17,4 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"]}
+uuid = { version = "1", features = ["v4"] }
