@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
 
     claim(&state, &config).await?;
 
-    http::serve(state).await?;
+    http::serve(state, config.enable_ssl).await?;
 
     Ok(())
 }

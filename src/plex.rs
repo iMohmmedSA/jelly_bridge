@@ -86,16 +86,20 @@ async fn publish_server(state: &State, config: &Config, machine_id: &str) -> Res
 
     publish_to_servers_xml(state, config, machine_id, &token).await?;
 
-    let (device_uri, https_enabled) = match setup_ssl(state, config, machine_id, &token).await {
-        Ok(secure_uri) => (secure_uri, "1"),
-        Err(e) => {
-            warn!("Failed to setup SSL: {}", e);
-            (
-                format!("http://{}:{}", config.advertise_ip, config.port),
-                "0",
-            )
+    let mut device_uri = format!("http://{}:{}", config.advertise_ip, config.port);
+    let mut https_enabled = "0";
+
+    if !config.enable_ssl {
+        info!("SSL is disabled via config. Using standard HTTP.");
+    } else {
+        match setup_ssl(state, config, machine_id, &token).await {
+            Ok(secure_uri) => {
+                device_uri = secure_uri;
+                https_enabled = "1";
+            }
+            Err(e) => warn!("Failed to setup SSL, falling back to HTTP: {}", e),
         }
-    };
+    }
 
     register_device(
         state,
@@ -184,9 +188,7 @@ async fn setup_ssl(
     let common_name = subject.common_name;
     info!("Received commonName: {}", common_name);
 
-    let ip_dashed = config.advertise_ip.replace('.', "-");
-    let domain_hash = common_name.replace("*.", "");
-    let device_uri = format!("https://{}.{}:{}", ip_dashed, domain_hash, config.port);
+    let device_uri = build_secure_uri(&config.advertise_ip, &common_name, config.port);
 
     if is_cert_valid().await {
         info!("Valid SSL certificates already exist on disk. Skipping generation.");
@@ -254,13 +256,13 @@ async fn setup_ssl(
             .headers(headers_token.clone())
             .send()
             .await?;
-            
+
         if dl_res.status() == 200 {
             cert_pem = Some(dl_res.text().await?);
             break;
         }
-        
-        tokio::time::sleep(std::time::Duration::from_secs(wait_time)).await;
+
+        sleep(Duration::from_secs(wait_time)).await;
         wait_time *= 2; // Exponential backoff: 2s, 4s, 8s, 16s, 32s, 64s
     }
 
@@ -272,9 +274,6 @@ async fn setup_ssl(
     fs::write("plex_key.pem", key_pem.as_str()).await?;
     info!("Saved cert to plex_cert.pem and key to plex_key.pem");
 
-    let ip_dashed = config.advertise_ip.replace('.', "-");
-    let domain_hash = common_name.replace("*.", "");
-    let device_uri = format!("https://{}.{}:{}", ip_dashed, domain_hash, config.port);
     Ok(device_uri)
 }
 
@@ -335,4 +334,10 @@ async fn is_cert_valid() -> bool {
     }
     .await
     .unwrap_or(false)
+}
+
+fn build_secure_uri(ip: &str, common_name: &str, port: u16) -> String {
+    let ip_dashed = ip.replace('.', "-").replace(':', "-");
+    let domain_hash = common_name.replace("*.", "");
+    format!("https://{}.{}:{}", ip_dashed, domain_hash, port)
 }

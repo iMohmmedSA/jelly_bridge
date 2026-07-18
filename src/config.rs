@@ -11,6 +11,7 @@ pub struct Config {
     pub plex_claim: Option<String>,
     pub advertise_ip: String,
     pub port: u16,
+    pub enable_ssl: bool,
 
     pub log_filter: String,
 }
@@ -22,6 +23,7 @@ impl Config {
         Ok(config::Config::builder()
             .set_default("server_name", "Jelly Bridge")?
             .set_default("port", 9096)?
+            .set_default("enable_ssl", true)?
             .set_default("log_filter", "info")?
             .add_source(Environment::default())
             .build()?
