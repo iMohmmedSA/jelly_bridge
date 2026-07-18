@@ -1,18 +1,36 @@
-use tokio::net::TcpListener;
+use std::{net::SocketAddr, path::Path};
+
+use axum::{Router, routing::IntoMakeService};
+use axum_server::tls_rustls::RustlsConfig;
 use tracing::info;
 
 use crate::{error::Result, http::router::router, state::State};
 
 mod router;
 
+async fn run_server(addr: SocketAddr, service: IntoMakeService<Router>) -> Result<()> {
+    let cert = Path::new("plex_cert.pem");
+    let key = Path::new("plex_key.pem");
+
+    if cert.exists() && key.exists() {
+        info!("Jelly Bridge listening securely on https://{}", addr);
+        let config = RustlsConfig::from_pem_file(cert, key).await?;
+        axum_server::bind_rustls(addr, config)
+            .serve(service)
+            .await?;
+    } else {
+        info!("Jelly Bridge listening on http://{}", addr);
+        axum_server::bind(addr).serve(service).await?;
+    }
+
+    Ok(())
+}
+
 pub async fn serve(state: State) -> Result<()> {
     let router = router(state);
-    let addr = "0.0.0.0:9096";
+    let addr = "0.0.0.0:9096".parse::<SocketAddr>().unwrap();
 
-    let listener = TcpListener::bind(addr).await?;
+    run_server(addr, router.into_make_service()).await?;
 
-    info!("Jelly Bridge listening on http://{}", addr);
-
-    axum::serve(listener, router).await?;
     Ok(())
 }

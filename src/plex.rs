@@ -1,8 +1,15 @@
+use std::time::Duration;
+
 use axum::http::{HeaderMap, HeaderValue};
 use serde::Deserialize;
+use tokio::{fs, time::sleep};
 use tracing::{info, warn};
 
-use crate::{config::Config, error::Result, state::State};
+use crate::{
+    config::Config,
+    error::{Error, Result},
+    state::State,
+};
 
 #[derive(Deserialize)]
 struct PlexUser {
@@ -35,7 +42,7 @@ pub async fn claim(state: &State, config: &Config) -> Result<()> {
     let id = state.db.get_or_create_machine_id().await?;
 
     if state.db.is_claimed().await? {
-        tracing::info!("Server identity verified from database.");
+        info!("Server identity verified from database.");
         publish_server(state, config, &id).await?;
         return Ok(());
     }
@@ -64,7 +71,7 @@ pub async fn claim(state: &State, config: &Config) -> Result<()> {
     let data: PlexUser = quick_xml::de::from_str(&xml)?;
 
     state.db.save_server_token(&data.auth_token).await?;
-    tracing::info!("Server successfully claimed!");
+    info!("Server successfully claimed!");
 
     publish_server(state, config, &id).await?;
     Ok(())
@@ -75,23 +82,55 @@ async fn publish_server(state: &State, config: &Config, machine_id: &str) -> Res
         .db
         .get_server_token()
         .await?
-        .expect("Token must exists");
+        .expect("Token must exist");
 
+    publish_to_servers_xml(state, config, machine_id, &token).await?;
+
+    let (device_uri, https_enabled) = match setup_ssl(state, config, machine_id, &token).await {
+        Ok(secure_uri) => (secure_uri, "1"),
+        Err(e) => {
+            warn!("Failed to setup SSL: {}", e);
+            (
+                format!("http://{}:{}", config.advertise_ip, config.port),
+                "0",
+            )
+        }
+    };
+
+    register_device(
+        state,
+        config,
+        machine_id,
+        &token,
+        &device_uri,
+        https_enabled,
+    )
+    .await?;
+
+    Ok(())
+}
+
+async fn publish_to_servers_xml(
+    state: &State,
+    config: &Config,
+    machine_id: &str,
+    token: &str,
+) -> Result<()> {
     info!("Publishing server metadata to servers.xml...");
     let mut xml_headers = build_headers(machine_id, &config.server_name);
     xml_headers.insert("Content-Type", HeaderValue::from_static("application/xml"));
 
     let escaped_server_name = quick_xml::escape::escape(&config.server_name);
     let xml_payload = format!(
-        r#"<MediaContainer size="1"><Server name="{}" host="" localAddresses="{}" machineIdentifier="{}" version="1.43.2.10687" /></MediaContainer>"#,
-        escaped_server_name, config.advertise_ip, machine_id
+        r#"<MediaContainer size="1"><Server name="{}" host="" address="{}" localAddresses="{}" machineIdentifier="{}" version="1.43.2.10687" /></MediaContainer>"#,
+        escaped_server_name, config.advertise_ip, config.advertise_ip, machine_id
     );
 
     let servers_res = state
         .http
         .post("https://plex.tv/servers.xml")
         .headers(xml_headers)
-        .query(&[("auth_token", token.as_str())])
+        .query(&[("auth_token", token)])
         .body(xml_payload)
         .send()
         .await?;
@@ -103,8 +142,151 @@ async fn publish_server(state: &State, config: &Config, machine_id: &str) -> Res
         warn!("Failed to publish server metadata. Status: {}", status);
     }
 
-    let uri = format!("http://{}:{}", config.advertise_ip, config.port);
-    info!("Registering device URI with Plex: {}", uri);
+    Ok(())
+}
+
+#[derive(Deserialize, Debug)]
+struct CertificateSubject {
+    #[serde(rename = "@commonName")]
+    common_name: String,
+}
+
+async fn setup_ssl(
+    state: &State,
+    config: &Config,
+    machine_id: &str,
+    token: &str,
+) -> Result<String> {
+    info!("Requesting SSL Certificate from Plex...");
+    let mut headers_token = build_headers(machine_id, &config.server_name);
+    headers_token.insert("X-Plex-Token", HeaderValue::from_str(token).unwrap());
+
+    let subject_url = format!(
+        "https://plex.tv/api/v2/devices/{}/certificate/subject",
+        machine_id
+    );
+    let subject_res = state
+        .http
+        .get(&subject_url)
+        .headers(headers_token.clone())
+        .send()
+        .await?;
+
+    if !subject_res.status().is_success() {
+        return Err(Error::Generic(format!(
+            "Failed to get certificate subject. Status: {}",
+            subject_res.status()
+        )));
+    }
+
+    let subject_xml = subject_res.text().await?;
+    let subject: CertificateSubject = quick_xml::de::from_str(&subject_xml)?;
+    let common_name = subject.common_name;
+    info!("Received commonName: {}", common_name);
+
+    let ip_dashed = config.advertise_ip.replace('.', "-");
+    let domain_hash = common_name.replace("*.", "");
+    let device_uri = format!("https://{}.{}:{}", ip_dashed, domain_hash, config.port);
+
+    if is_cert_valid().await {
+        info!("Valid SSL certificates already exist on disk. Skipping generation.");
+        return Ok(device_uri);
+    }
+
+    use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair};
+    let mut params = CertificateParams::new(Vec::<String>::new())?;
+    let mut dn = DistinguishedName::new();
+    dn.push(DnType::CommonName, common_name.clone());
+    params.distinguished_name = dn;
+    params.key_usages = vec![];
+    params.extended_key_usages = vec![];
+
+    use rsa::{
+        RsaPrivateKey,
+        pkcs8::{EncodePrivateKey, LineEnding},
+    };
+    let mut rng = rsa::rand_core::OsRng;
+
+    let private_key = RsaPrivateKey::new(&mut rng, 2048)?;
+    let key_pem = private_key.to_pkcs8_pem(LineEnding::LF)?;
+    let key_pair = KeyPair::from_pem(key_pem.as_str())?;
+    let csr = params.serialize_request(&key_pair)?;
+    let csr_pem = csr.pem()?;
+
+    let csr_url = format!(
+        "https://plex.tv/api/v2/devices/{}/certificate/csr?reason=new&invalidIn=0",
+        machine_id
+    );
+
+    use reqwest::multipart::{Form, Part};
+    let part = Part::text(csr_pem).file_name("csr.pem");
+    let form = Form::new().part("file", part);
+
+    let csr_res = state
+        .http
+        .put(&csr_url)
+        .headers(headers_token.clone())
+        .multipart(form)
+        .send()
+        .await?;
+    let status = csr_res.status();
+
+    if status != 204 {
+        let body = csr_res.text().await.unwrap_or_default();
+        return Err(Error::Generic(format!(
+            "Failed to upload CSR. Status: {}. Body: {}",
+            status, body
+        )));
+    }
+
+    info!("CSR accepted. Polling for certificate download...");
+    let download_url = format!(
+        "https://plex.tv/api/v2/devices/{}/certificate/download",
+        machine_id
+    );
+
+    let mut cert_pem = None;
+    let mut wait_time = 2;
+    for _ in 0..6 {
+        let dl_res = state
+            .http
+            .get(&download_url)
+            .headers(headers_token.clone())
+            .send()
+            .await?;
+            
+        if dl_res.status() == 200 {
+            cert_pem = Some(dl_res.text().await?);
+            break;
+        }
+        
+        tokio::time::sleep(std::time::Duration::from_secs(wait_time)).await;
+        wait_time *= 2; // Exponential backoff: 2s, 4s, 8s, 16s, 32s, 64s
+    }
+
+    let cert = cert_pem
+        .ok_or_else(|| Error::Generic("Timed out waiting for certificate download".to_string()))?;
+
+    info!("Certificate downloaded successfully.");
+    fs::write("plex_cert.pem", cert).await?;
+    fs::write("plex_key.pem", key_pem.as_str()).await?;
+    info!("Saved cert to plex_cert.pem and key to plex_key.pem");
+
+    let ip_dashed = config.advertise_ip.replace('.', "-");
+    let domain_hash = common_name.replace("*.", "");
+    let device_uri = format!("https://{}.{}:{}", ip_dashed, domain_hash, config.port);
+    Ok(device_uri)
+}
+
+async fn register_device(
+    state: &State,
+    config: &Config,
+    machine_id: &str,
+    token: &str,
+    device_uri: &str,
+    https_enabled: &str,
+) -> Result<()> {
+    info!("Registering device URI with Plex: {}", device_uri);
 
     let headers = build_headers(machine_id, &config.server_name);
     let device_url = format!("https://plex.tv/devices/{}", machine_id);
@@ -114,10 +296,10 @@ async fn publish_server(state: &State, config: &Config, machine_id: &str) -> Res
         .put(&device_url)
         .headers(headers)
         .query(&[
-            ("Connection[][uri]", uri.as_str()),
-            ("httpsEnabled", "0"),
+            ("Connection[][uri]", device_uri),
+            ("httpsEnabled", https_enabled),
             ("httpsRequired", "0"),
-            ("X-Plex-Token", token.as_str()),
+            ("X-Plex-Token", token),
         ])
         .send()
         .await?;
@@ -129,4 +311,28 @@ async fn publish_server(state: &State, config: &Config, machine_id: &str) -> Res
     }
 
     Ok(())
+}
+
+async fn is_cert_valid() -> bool {
+    use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    if !Path::new("plex_cert.pem").exists() || !Path::new("plex_key.pem").exists() {
+        return false;
+    }
+
+    async {
+        let cert_data = fs::read("plex_cert.pem").await.ok()?;
+        let (_, parsed_pem) = x509_parser::pem::parse_x509_pem(&cert_data).ok()?;
+        let (_, cert) = x509_parser::parse_x509_certificate(&parsed_pem.contents).ok()?;
+
+        let not_after = cert.validity().not_after;
+        let now_ts = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
+        let expires_ts = not_after.timestamp();
+
+        // Must have at least 30 days (2,592,000 seconds) left to be considered valid
+        Some(expires_ts - now_ts >= 2592000)
+    }
+    .await
+    .unwrap_or(false)
 }

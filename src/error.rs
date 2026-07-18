@@ -21,6 +21,15 @@ pub enum Error {
     #[error("XML Parse error: {0}")]
     XMLDeserialize(#[from] quick_xml::de::DeError),
 
+    #[error("RSA Crypto error: {0}")]
+    Rsa(#[from] rsa::errors::Error),
+
+    #[error("PKCS8 error: {0}")]
+    Pkcs8(#[from] rsa::pkcs8::Error),
+
+    #[error("Rcgen error: {0}")]
+    Rcgen(#[from] rcgen::Error),
+
     #[error("Generic error: {0}")]
     Generic(String),
 }
