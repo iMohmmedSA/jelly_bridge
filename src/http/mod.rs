@@ -6,9 +6,15 @@ use tracing::info;
 
 use crate::{error::Result, http::router::router, state::State};
 
+mod auth;
+mod route;
 mod router;
 
-async fn run_server(addr: SocketAddr, service: IntoMakeService<Router>, enable_ssl: bool) -> Result<()> {
+async fn run_server(
+    addr: SocketAddr,
+    service: IntoMakeService<Router>,
+    enable_ssl: bool,
+) -> Result<()> {
     let cert = Path::new("plex_cert.pem");
     let key = Path::new("plex_key.pem");
 

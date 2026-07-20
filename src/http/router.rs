@@ -1,10 +1,13 @@
 use axum::{Router, extract::Request, http::StatusCode};
 use tracing::{debug, warn};
 
-use crate::state::State;
+use crate::{http::route::media, state::State};
 
 pub fn router(state: State) -> Router {
-    Router::new().fallback(fallback_handler).with_state(state)
+    Router::new()
+        .nest("/media", media::router())
+        .fallback(fallback_handler)
+        .with_state(state)
 }
 
 async fn fallback_handler(req: Request) -> StatusCode {

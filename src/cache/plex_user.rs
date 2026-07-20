@@ -1,5 +1,5 @@
 #[derive(Clone)]
 pub struct PlexUser {
-    plex_id: u64,
-    jellyfin_api_key: String,
+    pub plex_id: i64,
+    pub jellyfin_api_key: String,
 }

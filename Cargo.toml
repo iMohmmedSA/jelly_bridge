@@ -13,9 +13,10 @@ moka = { version = "0.12", features = ["future"] }
 quick-xml = { version = "0.41", features = ["serialize"] }
 rand = "0.10"
 rcgen = { version = "0.14", features = ["pem"] }
-reqwest = { version = "0.13", features = ["multipart", "query"] }
+reqwest = { version = "0.13", features = ["json", "multipart", "query"] }
 rsa = { version = "0.9", features = ["pem"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 sqlx = { version = "0.9", features = ["sqlite", "runtime-tokio"] }
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
