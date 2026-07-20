@@ -52,6 +52,11 @@ fn extract_token(parts: &mut Parts) -> String {
 }
 
 async fn verify(token: String, state: &State) -> Result<PlexUser, StatusCode> {
+    if state.plex_limiter.check().is_err() {
+        warn!("Rate limited");
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
+
     info!("Cache Miss: Reaching out to Plex.tv to verify unknown token...");
 
     let res = state
