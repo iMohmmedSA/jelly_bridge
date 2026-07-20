@@ -1,5 +1,6 @@
 use crate::{config::Config, error::Result, plex::claim, state::State};
 
+mod cache;
 mod config;
 mod db;
 mod error;

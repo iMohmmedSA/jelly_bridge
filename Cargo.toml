@@ -9,6 +9,7 @@ axum = "0.8"
 axum-server = { version = "0.8", features = ["tls-rustls"] }
 config = "0.15"
 dotenvy = "0.15"
+moka = { version = "0.12", features = ["future"] }
 quick-xml = { version = "0.41", features = ["serialize"] }
 rand = "0.10"
 rcgen = { version = "0.14", features = ["pem"] }
