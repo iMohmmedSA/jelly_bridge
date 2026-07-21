@@ -83,4 +83,15 @@ impl Database {
 
         Ok(())
     }
+
+    pub async fn get_jellyfin_key(&self, plex_user_id: i64) -> Result<Option<String>> {
+        let record = sqlx::query!(
+            "SELECT jellyfin_api_key FROM users WHERE plex_user_id = ?",
+            plex_user_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(record.map(|r| r.jellyfin_api_key))
+    }
 }
